@@ -1,15 +1,15 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import json
 import math
 import sys
 import time
+import datetime
 import os
 from urllib.request import urlopen
 from urllib.error import URLError
 
-
-def otgwcmd(otgwCommand, otgwParam):
+def otgwCmd(otgwCommand, otgwParam):
     try:
         otgwResult = urlopen(os.environ["OTGWURL"] + "/command?" + otgwCommand + "=" + str(otgwParam)).read()
     except URLError as e:
@@ -18,9 +18,12 @@ def otgwcmd(otgwCommand, otgwParam):
     else:
         return otgwResult
 
-def otgwdebug(logString):
+def otgwDebug(*args):
     if os.environ["OTGWDEBUG"] == "1":
-        print(str(logString), file = sys.stderr)
+        logString = datetime.datetime.now().strftime("%c") + " : "
+        for arg in args:
+            logString += str(arg)
+        print(logString, file = sys.stderr)
     return
 
 def run_quickstart():
@@ -34,15 +37,15 @@ def run_quickstart():
         exit(1)
     else:
         # success .. write otgw data
-        with open("/tmp/otgwvals3.txt", "w") as f:
+        with open(os.environ["OTGWVALS"], "w") as f:
             json.dump(otgwData, f)
         if otgwData['dhwmode']['value'] == "1":
             # shower on, leave alone
             exit(0)
 
-    # update wether data older than 19 minutes
-    if os.path.exists("/tmp/outtemp3.txt") == False or (
-        time.time() - os.path.getmtime("/tmp/outtemp3.txt")) > (19 * 60):
+    # update wether data older than 19 minutes, restrict number of API calls
+    if os.path.exists(os.environ["OUTTEMP"]) == False or (
+        time.time() - os.path.getmtime(os.environ["OUTTEMP"])) > (19 * 60):
         weatherRequest = (os.environ["OTGWCITY"] + "&APPID=" + os.environ["APIKEYOT"] + "&units=metric")
         try:
             json_data = urlopen(
@@ -53,19 +56,23 @@ def run_quickstart():
         else:
             # success .. write weather data
             weatherData = json.loads(json_data)
-            with open("/tmp/outtemp3.txt", "w") as f:
+            with open(os.environ["OUTTEMP"], "w") as f:
                 json.dump(weatherData, f)
             f.close()
     else:
-        with open("/tmp/outtemp3.txt", "r") as f:
+        # read weather data
+        with open(os.environ["OUTTEMP"], "r") as f:
             weatherData = json.load(f)
 
-    if os.path.exists("/tmp/evohomez3.txt") == False or (
-        time.time() - os.path.getmtime("/tmp/evohomez3.txt")) > (9 * 60):
-        # get Evohome zone data
+    # if changed more than 9 minutes (Evohome 6 switchpoints per hour)
+    if os.path.exists(os.environ["EVOHOMEZ"]) == False or (
+        time.time() - os.path.getmtime(os.environ["EVOHOMEZ"])) > (9 * 60):
+
+        # load Evohome module
         sys.path.insert(0, os.environ["HOME"] + "/evohome-client")
         from evohomeclient2 import EvohomeClient
 
+        # get Evohome zone temperature data
         try:
             #login to Evohome backend
             evoClient = EvohomeClient(os.environ["EVOLOGIN"], os.environ["EVOPASSWD"])
@@ -77,10 +84,10 @@ def run_quickstart():
             evoWimm = []
             for evoData in evoClient.temperatures():
                 evoWimm.append(evoData)
-            with open("/tmp/evohomez3.txt", "w") as f:
+            with open(os.environ["EVOHOMEZ"], "w") as f:
                 json.dump(evoWimm, f)
     else:
-        with open("/tmp/evohomez3.txt", "r") as f:
+        with open(os.environ["EVOHOMEZ"], "r") as f:
             evoWimm = json.load(f)
 
 #
@@ -97,10 +104,6 @@ def run_quickstart():
     # heating mode
     HM = int(otgwData['chmode']['value'])
 
-    # setpoint
-    SP = float(otgwData['chwsetpoint']['value'])
-    SH = float(otgwData['chwsetpoint']['value'])
-
     # outside temperature
     OT = float(weatherData['main']['temp'])
 
@@ -110,13 +113,14 @@ def run_quickstart():
         # linear -20 > +20 outside temperature
         OTCSMIN = float(os.environ["OTCSMIN"])
         OTCSMAX = float(os.environ["OTCSMAX"])
-        CS = OTCSMIN + 0.4 * (1 - OT / 20) * (OTCSMAX - OTCSMIN) + MAXDIF
+        CS = OTCSMIN + 0.4 * (1 - OT / ((20 - -20)/2)) * (OTCSMAX - OTCSMIN) + MAXDIF
 
         # see cv manual
         pendelMax = 5
 
         PT = float(otgwData['boilertemp']['value'])
         if CS > PT + pendelMax:
+            # gradual change
             CS = PT + pendelMax
 
         CS = math.ceil(CS)
@@ -128,42 +132,51 @@ def run_quickstart():
         # temporary setpoint
         TT = '0'
     else:
-        print("else", MAXDIF, HM, sep = ' | ')
         # pass along thermostat value
         CS = 0
 
+        # setpoint (just copy current)
+        SH = float(otgwData['chwsetpoint']['value'])
+
+        # reset override
         if otgwData['maxmod']['value'] == 79:
             MM = 'T'
 
         # lower temporary setpoint
         TT = '14'
 
+    otgwDebug("CS= ", CS)
 #
 # 3. set central heating parameters
 #
-    if MAXDIF >= 0 and HM == 1:
+    # Evohome demand
+    if MAXDIF > 0 and HM == 1:
         # wait until gateway mode
-        while str(otgwcmd("PR", 'M')).find('M=M') > 0:
-            otgwcmd("GW", '1')
+        while str(otgwCmd("PR", 'M')).find('M=M') > 0:
+            otgwCmd("GW", '1')
             time.sleep(3)
 
-        # outside (ambiant) temperature
+        # outside (ambient) temperature
         if OT != otgwData["outside"]["value"]:
-            otgwcmd("OT", OT)
+            otgwCmd("OT", OT)
 
         # set current setpoint
-        otgwcmd("CS=", CS)
+        otgwCmd("CS", CS)
 
-        if SP != SH:
-            otgwcmd("SH", SH)
+        # set max. setpoint
+        if SH != otgwData['chwsetpoint']['value']:
+            otgwCmd("SH", SH)
+
+        # (re)set maximum modulation
+        otgwCmd("MM", MM)
 
         # (re)set temporary setpoint
-        otgwcmd("TT", TT)
+        otgwCmd("TT", TT)
     else:
-        # no heating demand
-        while str(otgwcmd("PR", 'M')).find('M=M') < 0:
+        # no Evohome demand
+        while str(otgwCmd("PR", 'M')).find('M=M') < 0:
             # set OTGW to monitoring (if not already)
-            otgwcmd("GW", '0')
+            otgwCmd("GW", '0')
             time.sleep(3)
 
 #
