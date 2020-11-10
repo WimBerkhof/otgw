@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 from google.cloud import firestore
 import google.cloud.exceptions
