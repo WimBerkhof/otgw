@@ -2,11 +2,13 @@
 
 from google.cloud import firestore
 import google.cloud.exceptions
-import urllib
+from urllib.request import urlopen
+from urllib.error import URLError
+from urllib.error import HTTPError
 import json
 import sys
-import subprocess
 import os
+import datetime
 
 # true or false, return boolean
 def parseBoolString(theString):
@@ -24,8 +26,21 @@ def getserial():
     f.close()
   except:
     cpuserial = "ERROR000000000"
- 
+
   return cpuserial
+
+def otgwDebug(*args):
+    if os.environ["OTGWDEBUG"] == "1":
+        logString = datetime.datetime.now().strftime("%c") + " :"
+        for arg in args:
+            logString += " " + str(arg)
+        with open(os.environ["OTGWLOG"], "at") as f:
+            f.write(logString + '\n')
+    return
+
+def otgwExit(exitValue):
+    otgwDebug("otgwExit value = ", exitValue)
+    sys.exit(exitValue)
 
 def run_quickstart():
 
@@ -33,20 +48,20 @@ def run_quickstart():
     #
     # get OTGW values in json format from the gateway
     #
-    try: 
-        with urllib.request.urlopen(os.environ["OTGWURL"]+"/json") as json_data:
-            otgw_data = json.load(json_data)
+    try:
+        otgwDebug("read otgw vals")
+        otgwData = json.loads(urlopen(os.environ["OTGWURL"] + "/json").read())
     except IOError as e:
         print("I/O error({0}): {1}".format(e.errno, e.strerror))
-        exit(1)
-       
+        otgwExit(1)
+
     # read weather data
     try:
         with open(os.environ["OUTTEMP"], 'r') as json_data:
             weather_data = json.load(json_data)
-    except IOError as e:
-        print("I/O error({0}): {1}".format(e.errno, e.strerror))
-        exit(2)
+    except OSError as e:
+            print("OS error({0}): {1}".format(e.errno, e.strerror))
+            otgwExit(2)
     else:
         #print weather_data
         #print weather_data['main']['temp']
@@ -55,15 +70,15 @@ def run_quickstart():
     #
     # get Evohome data in json format
     #
-    try: 
+    try:
         with open (os.environ["EVOHOMEZ"], 'r') as json_data:
             evohome_data = []
             # one line per zone
             for evohome_zone in json_data:
                 evohome_data.append(json.loads(evohome_zone))
-    except IOError as e:
-        print("I/O error({0}): {1}".format(e.errno, e.strerror))
-        exit(2)
+    except OSError as e:
+            print("OS error({0}): {1}".format(e.errno, e.strerror))
+            otgwExit(3)
     else:
         json_data.close()
 
@@ -79,31 +94,31 @@ def run_quickstart():
     #
     batch = db.batch()
 
-    # 
+    #
     # create new collection OTGW data
     #
     otgwid = getserial()
-    
+
     otgw_ref = db.collection(u'OTGW').document(otgwid).get()
     if otgw_ref is None:
-	    otgw_ref = db.collection(u'OTGW').document(otgwid).set({u'description': u'OpenTherm Gateway' })
+            otgw_ref = db.collection(u'OTGW').document(otgwid).set({u'description': u'OpenTherm Gateway' })
 
     otgw_ref = db.collection(u'OTGW').document(otgwid).collection(u'samples').document()
     batch.set(otgw_ref, {
-            u'boilertemp': float(otgw_data['boilertemp']['value']),
-            u'chmode': parseBoolString(otgw_data['chmode']['value']),
-            u'chwsetpoint': float(otgw_data['chwsetpoint']['value']),
-            u'controlsp': float(otgw_data['controlsp']['value']),
-            u'dhwenable': parseBoolString(otgw_data['dhwenable']['value']),
-            u'dhwmode': parseBoolString(otgw_data['dhwmode']['value']),
-            u'dhwsetpoint': float(otgw_data['dhwsetpoint']['value']),
-            u'flame': parseBoolString(otgw_data['flame']['value']),
-            u'maxmod': float(otgw_data['maxmod']['value']),
-            u'modulation': float(otgw_data['modulation']['value']),
+            u'boilertemp': float(otgwData['boilertemp']['value']),
+            u'chmode': parseBoolString(otgwData['chmode']['value']),
+            u'chwsetpoint': float(otgwData['chwsetpoint']['value']),
+            u'controlsp': float(otgwData['controlsp']['value']),
+            u'dhwenable': parseBoolString(otgwData['dhwenable']['value']),
+            u'dhwmode': parseBoolString(otgwData['dhwmode']['value']),
+            u'dhwsetpoint': float(otgwData['dhwsetpoint']['value']),
+            u'flame': parseBoolString(otgwData['flame']['value']),
+            u'maxmod': float(otgwData['maxmod']['value']),
+            u'modulation': float(otgwData['modulation']['value']),
             u'outside': float(weather_data['main']['temp']),
-            u'returntemp': float(otgw_data['returntemp']['value']),
-            u'setpoint': float(otgw_data['setpoint']['value']),
-            u'temperature': float(otgw_data['temperature']['value']),
+            u'returntemp': float(otgwData['returntemp']['value']),
+            u'setpoint': float(otgwData['setpoint']['value']),
+            u'temperature': float(otgwData['temperature']['value']),
             u'timestamp': firestore.SERVER_TIMESTAMP
     })
 
@@ -113,14 +128,14 @@ def run_quickstart():
     for i in range(0, len(evohome_data)):
         zone_ref = db.collection(u'evohome').document(evohome_data[i]['id']).get()
         if zone_ref is None:
-            batch.set(zone_ref, {u'description': u'Evohome zone'})
+                batch.set(zone_ref, {u'description': u'Evohome zone'})
 
         zone_ref = db.collection(u'evohome').document(evohome_data[i]['id']).collection(u'samples').document()
-        batch.set(zone_ref,{
+        batch.set(zone_ref, {
                 u'setpoint': float(evohome_data[i]['setpoint']),
-		        u'temp': float(evohome_data[i]['temp']),
-		        u'timestamp': firestore.SERVER_TIMESTAMP
-	    })
+                u'temp': float(evohome_data[i]['temp']),
+                u'timestamp': firestore.SERVER_TIMESTAMP
+        })
 
     #
     # write documents
@@ -128,7 +143,17 @@ def run_quickstart():
     batch.commit()
 
 if __name__ == '__main__':
-    #os.system('bash -c \'source ~/.otsetcfg\.txt\'')
-    subprocess.run("bash -c source ~/.otsetcfg.txt")
+    try:
+        with open(os.environ["HOME"] + "/.otsetcfg.txt", "r") as f:
+            for environVariable in f:
+                if environVariable.find("export ", 0) != -1:
+                    putenvLine = environVariable.replace("export ", "").split("=")
+                    os.environ[putenvLine[0]] = putenvLine[1].rstrip("\n")
+    except IOError as e:
+        print("I/O error({0}): {1}".format(e.errno, e.strerror))
+        exit(11)
+    else:
+        f.close()
+
     run_quickstart()
     exit(0)

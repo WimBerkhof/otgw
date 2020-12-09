@@ -7,41 +7,62 @@ import time
 import datetime
 import os
 from urllib.request import urlopen
-from urllib.error import URLError
+from urllib.error import HTTPError
 
 def otgwCmd(otgwCommand, otgwParam):
+    otgwDebug("otgwCommand", otgwCommand, otgwParam)
+
     try:
         otgwResult = urlopen(os.environ["OTGWURL"] + "/command?" + otgwCommand + "=" + str(otgwParam)).read()
-    except URLError as e:
-        print("otgwCommand failed: " + e.reason)
-        exit(99)
+    except HTTPError as e:
+        otgwDebug("otgwCommand failed: ", "code = ", e.code, " reason = ", e.reason)
+        otgwExit(99)
     else:
         return otgwResult
 
 def otgwDebug(*args):
     if os.environ["OTGWDEBUG"] == "1":
-        logString = datetime.datetime.now().strftime("%c") + " : "
+        logString = datetime.datetime.now().strftime("%c") + " :"
         for arg in args:
-            logString += str(arg)
-        print(logString, file = sys.stderr)
+            logString += " " + str(arg)
+        with open(os.environ["OTGWLOG"], "at") as f:
+            f.write(logString + '\n')
     return
 
+def otgwExit(exitValue):
+    otgwDebug("otgwExit value = ", exitValue)
+    if isinstance(exitValue, int) and exitValue != 0:
+        # failback to monitor mode
+        while str(otgwCmd("PR", 'M')).find('M=M') < 0:
+            # set OTGW to monitoring (if not already)
+            otgwCmd("GW", '0')
+            time.sleep(3)
+    sys.exit(exitValue)
+
 def run_quickstart():
+    otgwDebug("otgwset BEGIN")
+
     #
     # get OTGW values in json format from the gateway
     #
     try:
+        otgwDebug("read otgw vals")
         otgwData = json.loads(urlopen(os.environ["OTGWURL"] + "/json").read())
+    except HTTPError as e:
+        otgwDebug("get otgwData failed: ", "code = ", e.code, " reason = ", e.reason)
     except IOError as e:
         print("I/O error({0}): {1}".format(e.errno, e.strerror))
-        exit(1)
+        otgwExit(1)
     else:
         # success .. write otgw data
         with open(os.environ["OTGWVALS"], "w") as f:
             json.dump(otgwData, f)
+            f.close()
         if otgwData['dhwmode']['value'] == "1":
             # shower on, leave alone
-            exit(0)
+            otgwExit(2)
+
+    otgwDebug("read weather data")
 
     # update wether data older than 19 minutes, restrict number of API calls
     if os.path.exists(os.environ["OUTTEMP"]) == False or (
@@ -50,23 +71,31 @@ def run_quickstart():
         try:
             json_data = urlopen(
                 "http://api.openweathermap.org/data/2.5/weather?q=" + weatherRequest).read()
+        except HTTPError as e:
+            otgwDebug("get weatherData failed: ", "code = ", e.code, " reason = ", e.reason)
         except OSError as e:
             print("OS error({0}): {1}".format(e.errno, e.strerror))
-            exit(2)
+            otgwExit(3)
         else:
             # success .. write weather data
+            otgwDebug("write weather data")
             weatherData = json.loads(json_data)
             with open(os.environ["OUTTEMP"], "w") as f:
                 json.dump(weatherData, f)
-            f.close()
+                f.close()
     else:
         # read weather data
         with open(os.environ["OUTTEMP"], "r") as f:
             weatherData = json.load(f)
+            f.close()
 
     # if changed more than 9 minutes (Evohome 6 switchpoints per hour)
     if os.path.exists(os.environ["EVOHOMEZ"]) == False or (
         time.time() - os.path.getmtime(os.environ["EVOHOMEZ"])) > (9 * 60):
+
+        # clear Evohome data
+        #if os.path.exists(os.environ["EVOHOMEZ"]) == True:
+        #    os.remove(os.environ["EVOHOMEZ"])
 
         # load Evohome module
         sys.path.insert(0, os.environ["HOME"] + "/evohome-client")
@@ -74,21 +103,29 @@ def run_quickstart():
 
         # get Evohome zone temperature data
         try:
+            otgwDebug("retrieve Evohome data")
+
             #login to Evohome backend
-            evoClient = EvohomeClient(os.environ["EVOLOGIN"], os.environ["EVOPASSWD"])
+            evoClient = EvohomeClient(os.environ["EVOLOGIN"], os.environ["EVOPASSWD"], debug=False)
+        except HTTPError as e:
+            otgwDebug("EvohomeClient failed: ", "code = ", e.code, " reason = ", e.reason)
         except OSError as e:
             print("OS error({0}): {1}".format(e.errno, e.strerror))
-            exit(3)
+            otgwExit(4)
         else:
-            # succes .. get Evohome data
+            # succes .. write Evohome data
+            otgwDebug("write Evohome data")
             evoWimm = []
             for evoData in evoClient.temperatures():
                 evoWimm.append(evoData)
             with open(os.environ["EVOHOMEZ"], "w") as f:
                 json.dump(evoWimm, f)
-    else:
-        with open(os.environ["EVOHOMEZ"], "r") as f:
-            evoWimm = json.load(f)
+                f.close()
+
+    otgwDebug("read Evohome data")
+    with open(os.environ["EVOHOMEZ"], "r") as f:
+        evoWimm = json.load(f)
+        f.close()
 
 #
 # 2. calculate central heating settings
@@ -110,13 +147,20 @@ def run_quickstart():
     if (MAXDIF > 0) and (HM == 1):
         # Evohome requests heating, set current setpoint
 
-        # linear -20 > +20 outside temperature
+        # min/max values of heating curve
         OTCSMIN = float(os.environ["OTCSMIN"])
         OTCSMAX = float(os.environ["OTCSMAX"])
-        CS = OTCSMIN + 0.4 * (1 - OT / ((20 - -20)/2)) * (OTCSMAX - OTCSMIN) + MAXDIF
+
+        # gradient of heating curve
+        # HCSLOPE = float(os.environ["HCSLOPE"])
+
+        # linear -20 > +20 outside temperature
+        CS = OTCSMIN + MAXDIF + ((20 - OT)/(20 - -20)) * (OTCSMAX - OTCSMIN)
+
+        otgwDebug("CS heating curve = ", CS)
 
         # see cv manual
-        pendelMax = 5
+        pendelMax = 10
 
         PT = float(otgwData['boilertemp']['value'])
         if CS > PT + pendelMax:
@@ -135,43 +179,45 @@ def run_quickstart():
         # pass along thermostat value
         CS = 0
 
-        # setpoint (just copy current)
-        SH = float(otgwData['chwsetpoint']['value'])
+        # 'buffer bottom' temperature
+        SH = float(os.environ["BUFTEMP"])
 
         # reset override
-        if otgwData['maxmod']['value'] == 79:
-            MM = 'T'
+        MM = '23'
 
         # lower temporary setpoint
-        TT = '14'
+        TT = '17'
 
-    otgwDebug("CS= ", CS)
-#
-# 3. set central heating parameters
-#
-    # Evohome demand
-    if MAXDIF > 0 and HM == 1:
+    #
+    # 3. set central heating parameters
+    #
+    otgwDebug("MAXDIF =", MAXDIF, "HM =", HM)
+    otgwDebug("CS =", CS, "returntemp =", otgwData['returntemp']['value'],"SH =", SH)
+
+    # Evohome demand                return hotter than setpoint
+    if (HM == 1) and ((MAXDIF > 0) or (float(otgwData['returntemp']['value']) > SH)):
         # wait until gateway mode
         while str(otgwCmd("PR", 'M')).find('M=M') > 0:
             otgwCmd("GW", '1')
             time.sleep(3)
 
         # outside (ambient) temperature
-        if OT != otgwData["outside"]["value"]:
+        if OT != float(otgwData["outside"]["value"]):
             otgwCmd("OT", OT)
 
-        # set current setpoint
-        otgwCmd("CS", CS)
+        if (float(otgwData['chwsetpoint']['value']) != float(os.environ["BUFTEMP"])) or (SH != float(os.environ["BUFTEMP"])):
+            # set current setpoint
+            otgwCmd("CS", CS)
 
-        # set max. setpoint
-        if SH != otgwData['chwsetpoint']['value']:
-            otgwCmd("SH", SH)
-
-        # (re)set maximum modulation
-        otgwCmd("MM", MM)
+            # (re)set maximum modulation
+            otgwCmd("MM", MM)
 
         # (re)set temporary setpoint
         otgwCmd("TT", TT)
+
+        # set max. setpoint
+        if SH != float(otgwData['chwsetpoint']['value']):
+            otgwCmd("SH", SH)
     else:
         # no Evohome demand
         while str(otgwCmd("PR", 'M')).find('M=M') < 0:
@@ -189,11 +235,20 @@ if __name__ == "__main__":
                 if environVariable.find("export ", 0) != -1:
                     putenvLine = environVariable.replace("export ", "").split("=")
                     os.environ[putenvLine[0]] = putenvLine[1].rstrip("\n")
+        f.close()
     except IOError as e:
         print("I/O error({0}): {1}".format(e.errno, e.strerror))
-        exit(11)
-    else:
-        f.close()
+        otgwExit(11)
 
-    run_quickstart()
-    exit(0)
+    # redirect stderr
+    sys.stderr = open(os.environ["OTGWLOG"], "at")
+
+    try:
+        run_quickstart()
+    except Exception as e:
+        otgwDebug("otgwset ERROR = ", e)
+        otgwExit(e)
+    else:
+        otgwExit(0)
+    finally:
+        otgwDebug("otgwset EXIT")

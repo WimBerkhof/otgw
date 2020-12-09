@@ -9,7 +9,7 @@ This project includes Python scripts to set and log central heating parameters. 
 The current central heating setup is a Remeha 'Tzerra Hybrid 390 3C' system. Included are:  
 - solar collectors;
 - Mitsubishi Ecodan heatpump;
-- Remeha Tzerra central heating;
+- Remeha Tzerra Plus central heating;
 - Honeywell Evohome thermostat (with internet gateway, not wifi). 
 
 The OTGW is connected via usb to a 'Raspberry Pi Model B+'
@@ -29,8 +29,6 @@ Accordingly the maximum setpoint ('SH') is calculated to limit central heating t
 
 To override the thermostat the OTGW is run in gateway mode. When there's no heating demand (eg. at night) the control is transferred back to the thermostat, OTGW set to monitoring mode.
 
-The otgwset.py runs every ten minutes by cron. The Evohome interval is six times per hour.
-
 ## otgwlog.py
 
 Python script to log data to Google Firestore.
@@ -42,14 +40,16 @@ Settings file for both Python scripts. Syntax: parameter=value
 Parameter | Description
 --------- | -----------
 OTGWDEBUG | debug messages (0 or 1)
+OTGWLOG | file path to log file
 APIKEYOT | OpenWeatherMap API key
 OTGWCITY | location of OTGW (for OpenWeatherMap)
 OUTTEMP | file path to store weather data (eg. /tmp/outtemp.json)
 EVOHOMEZ | file path to store Evohome zone data
-EVOGATEWAY | ip-address of Evohome gateway
+EVOGATEWAY | ip-address of Evohome gateway (obsolete)
 EVOLOGIN | Evohome backend portal login
 EVOPASSWD | Evohome backend portal password
 OTGWURL | url of OTGW gateway (eg. http://192.168.x.y:8080)
+BUFTEMP | buffer temperature (when no heating demand)
 OTCSMAX | heating curve setpoint -20 degrees celcius
 OTCSMIN | heating curve setpoint +20 degrees celcius
 
@@ -63,9 +63,16 @@ Run the script: python otgwset.py
 
 Verify whether output files exist and contain valid data.
 
+Schedule the script using cron. 
+Align with number of switchpoints of thermostat, eg. six times per hour.
+
+Avoid hanging of script by limiting runtime to one minute:
+
+timeout 1m ${HOME}/otgwset.py
+
+
 ## Todo list
 
-- add debug messages to improve newbie user experience;
 - find out how to check whether Evohome data at backend portal is current;
 - use TensorFlow to adjust heating curve based on history data in Google Firestore;
 - create Javascript app/webpage to monitor central heating more advanced than 'otmonitor'.
