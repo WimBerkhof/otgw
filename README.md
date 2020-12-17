@@ -33,6 +33,12 @@ To override the thermostat the OTGW is run in gateway mode. When there's no heat
 
 Python script to log data to Google Firestore.
 
+It's Python 2 only. Unable to fix all Google cloud dependencies on 'Raspberry Pi Model B+' (ARMv6) to migrate to Python 3.
+
+Scheduled in cron to log data every two minutes:
+
+        */2 * * * * python2 otgwlog.py
+
 ## .otsetcfg.txt
 
 Settings file for both Python scripts. Syntax: parameter=value
@@ -68,7 +74,7 @@ Align with number of switchpoints of thermostat, eg. six times per hour.
 
 Avoid hanging of script by limiting runtime to one minute:
 
-timeout 1m ${HOME}/otgwset.py
+1,11,21,31,41,51 * * * * timeout 1m otgwset.py
 
 
 ## Todo list
