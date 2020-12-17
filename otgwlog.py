@@ -1,14 +1,12 @@
-#!/usr/bin/env python
+
+#!/usr/bin/env python2
 
 from google.cloud import firestore
 import google.cloud.exceptions
-from urllib.request import urlopen
-from urllib.error import URLError
-from urllib.error import HTTPError
+import urllib2
 import json
 import sys
 import os
-import datetime
 
 # true or false, return boolean
 def parseBoolString(theString):
@@ -29,58 +27,42 @@ def getserial():
 
   return cpuserial
 
-def otgwDebug(*args):
-    if os.environ["OTGWDEBUG"] == "1":
-        logString = datetime.datetime.now().strftime("%c") + " :"
-        for arg in args:
-            logString += " " + str(arg)
-        with open(os.environ["OTGWLOG"], "at") as f:
-            f.write(logString + '\n')
-    return
-
-def otgwExit(exitValue):
-    otgwDebug("otgwExit value = ", exitValue)
-    sys.exit(exitValue)
-
 def run_quickstart():
 
     getserial()
+
     #
     # get OTGW values in json format from the gateway
     #
     try:
-        otgwDebug("read otgw vals")
-        otgwData = json.loads(urlopen(os.environ["OTGWURL"] + "/json").read())
+        otgwData = json.loads(urllib2.urlopen(os.environ["OTGWURL"]+"/json").read())
     except IOError as e:
         print("I/O error({0}): {1}".format(e.errno, e.strerror))
-        otgwExit(1)
+        exit(1)
 
     # read weather data
     try:
-        with open(os.environ["OUTTEMP"], 'r') as json_data:
-            weather_data = json.load(json_data)
-    except OSError as e:
-            print("OS error({0}): {1}".format(e.errno, e.strerror))
-            otgwExit(2)
-    else:
-        #print weather_data
-        #print weather_data['main']['temp']
-        json_data.close()
+        with open(os.environ["OUTTEMP"], 'r') as f:
+            weatherData = json.load(f)
+            f.close
+    except IOError as e:
+        print("I/O error({0}): {1}".format(e.errno, e.strerror))
+        exit(2)
+    #else:
+        #print weatherData
+        #print weatherData['main']['temp']
 
     #
     # get Evohome data in json format
     #
     try:
-        with open (os.environ["EVOHOMEZ"], 'r') as json_data:
-            evohome_data = []
-            # one line per zone
-            for evohome_zone in json_data:
-                evohome_data.append(json.loads(evohome_zone))
-    except OSError as e:
-            print("OS error({0}): {1}".format(e.errno, e.strerror))
-            otgwExit(3)
-    else:
-        json_data.close()
+        evohomeData = []
+        with open (os.environ["EVOHOMEZ"], 'r') as f:
+            evohomeData = json.load(f)
+            f.close()
+    except IOError as e:
+        print("I/O error({0}): {1}".format(e.errno, e.strerror))
+        exit(2)
 
     #
     # Explicitly use service account credentials
@@ -99,42 +81,42 @@ def run_quickstart():
     #
     otgwid = getserial()
 
-    otgw_ref = db.collection(u'OTGW').document(otgwid).get()
+    otgw_ref = db.collection('OTGW').document(otgwid).get()
     if otgw_ref is None:
-            otgw_ref = db.collection(u'OTGW').document(otgwid).set({u'description': u'OpenTherm Gateway' })
+            otgw_ref = db.collection('OTGW').document(otgwid).set({'description': 'OpenTherm Gateway' })
 
-    otgw_ref = db.collection(u'OTGW').document(otgwid).collection(u'samples').document()
+    otgw_ref = db.collection('OTGW').document(otgwid).collection('samples').document()
     batch.set(otgw_ref, {
-            u'boilertemp': float(otgwData['boilertemp']['value']),
-            u'chmode': parseBoolString(otgwData['chmode']['value']),
-            u'chwsetpoint': float(otgwData['chwsetpoint']['value']),
-            u'controlsp': float(otgwData['controlsp']['value']),
-            u'dhwenable': parseBoolString(otgwData['dhwenable']['value']),
-            u'dhwmode': parseBoolString(otgwData['dhwmode']['value']),
-            u'dhwsetpoint': float(otgwData['dhwsetpoint']['value']),
-            u'flame': parseBoolString(otgwData['flame']['value']),
-            u'maxmod': float(otgwData['maxmod']['value']),
-            u'modulation': float(otgwData['modulation']['value']),
-            u'outside': float(weather_data['main']['temp']),
-            u'returntemp': float(otgwData['returntemp']['value']),
-            u'setpoint': float(otgwData['setpoint']['value']),
-            u'temperature': float(otgwData['temperature']['value']),
-            u'timestamp': firestore.SERVER_TIMESTAMP
+            'boilertemp': float(otgwData['boilertemp']['value']),
+            'chmode': parseBoolString(otgwData['chmode']['value']),
+            'chwsetpoint': float(otgwData['chwsetpoint']['value']),
+            'controlsp': float(otgwData['controlsp']['value']),
+            'dhwenable': parseBoolString(otgwData['dhwenable']['value']),
+            'dhwmode': parseBoolString(otgwData['dhwmode']['value']),
+            'dhwsetpoint': float(otgwData['dhwsetpoint']['value']),
+            'flame': parseBoolString(otgwData['flame']['value']),
+            'maxmod': float(otgwData['maxmod']['value']),
+            'modulation': float(otgwData['modulation']['value']),
+            'outside': float(weatherData['main']['temp']),
+            'returntemp': float(otgwData['returntemp']['value']),
+            'setpoint': float(otgwData['setpoint']['value']),
+            'temperature': float(otgwData['temperature']['value']),
+            'timestamp': firestore.SERVER_TIMESTAMP
     })
 
     #
     # create collections for Evohome data
     #
-    for i in range(0, len(evohome_data)):
-        zone_ref = db.collection(u'evohome').document(evohome_data[i]['id']).get()
+    for i in range(0, len(evohomeData)):
+        zone_ref = db.collection('evohome').document(evohomeData[i]['id']).get()
         if zone_ref is None:
-                batch.set(zone_ref, {u'description': u'Evohome zone'})
+                batch.set(zone_ref, {'description': 'Evohome zone'})
 
-        zone_ref = db.collection(u'evohome').document(evohome_data[i]['id']).collection(u'samples').document()
+        zone_ref = db.collection('evohome').document(evohomeData[i]['id']).collection('samples').document()
         batch.set(zone_ref, {
-                u'setpoint': float(evohome_data[i]['setpoint']),
-                u'temp': float(evohome_data[i]['temp']),
-                u'timestamp': firestore.SERVER_TIMESTAMP
+                'setpoint': float(evohomeData[i]['setpoint']),
+                'temp': float(evohomeData[i]['temp']),
+                'timestamp': firestore.SERVER_TIMESTAMP
         })
 
     #
