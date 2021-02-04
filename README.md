@@ -37,7 +37,7 @@ It's Python 2 only. Unable to fix all Google cloud dependencies on 'Raspberry Pi
 
 Scheduled in cron to log data every two minutes:
 
-        */2 * * * * python2 otgwlog.py
+        */2 * * * * python2 <full path>/otgwlog.py
 
 ## .otsetcfg.txt
 
@@ -72,9 +72,7 @@ Verify whether output files exist and contain valid data.
 Schedule the script using cron. 
 Align with number of switchpoints of thermostat, eg. six times per hour.
 
-Avoid hanging of script by limiting runtime to one minute:
-
-        1,11,21,31,41,51 * * * * timeout 1m otgwset.py
+        1,11,21,31,41,51 * * * * <full path>/otgwset.py
 
 
 ## Todo list
