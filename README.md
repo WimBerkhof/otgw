@@ -74,7 +74,7 @@ Align with number of switchpoints of thermostat, eg. six times per hour.
 
 Avoid hanging of script by limiting runtime to one minute:
 
-1,11,21,31,41,51 * * * * timeout 1m otgwset.py
+        1,11,21,31,41,51 * * * * timeout 1m otgwset.py
 
 
 ## Todo list
