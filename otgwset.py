@@ -112,9 +112,12 @@ def run_quickstart():
             weatherData = json.load(f)
             f.close()
 
-    # if changed more than 7 minutes (Evohome 6 switchpoints per hour)
+    # reply timeout Evohome backend portal
+    TCCTimeout = 113
+
+    # if changed more than 5 minutes (Evohome 6 switchpoints per hour)
     if os.path.exists(os.environ["EVOHOMEZ"]) == False or (
-        time.time() - os.path.getmtime(os.environ["EVOHOMEZ"])) > (7 * 60):
+        time.time() - os.path.getmtime(os.environ["EVOHOMEZ"])) > (9 * 60 - 2 * TCCTimeout):
 
         # load Evohome module
         sys.path.insert(0, os.environ["HOME"] + "/evohome-client")
@@ -125,29 +128,28 @@ def run_quickstart():
             otgwDebug("retrieve Evohome data")
 
             #login to Evohome backend
-            evoClient = EvohomeClient(os.environ["EVOLOGIN"], os.environ["EVOPASSWD"], debug=False, timeout=71)
-        except (requests.ConnectionError) as e:
+            evoClient = EvohomeClient(os.environ["EVOLOGIN"], os.environ["EVOPASSWD"], debug=False, timeout=TCCTimeout)
+        except (requests.HTTPError, requests.Timeout, Exception) as e:
+        # except (requests.HTTPError, requests.Timeout) as e:
             otgwDebug("EvohomeClient error: ", str(e))
-        except (requests.ConnectTimeout) as e:
-            otgwDebug("EvohomeClient timeout: ", str(e))
-        except Exception as e:
-            otgwDebug("EvohomeClient failed: ", " code = ", str(e))
-        #    otgwExit(4)
+
+            # in case of error assume no demand
+            evoWimm = [{ "id": "999999999", "name": "EvohomeERR", "temp": 99.0, "setpoint": 99.0}]
         else:
             # succes .. write Evohome data
-            otgwDebug("Evohome data received")
+            otgwDebug("Evohome TCC connected")
             evoWimm = []
             for evoData in evoClient.temperatures():
-                otgwDebug("evoData zone", evoData['name'])
                 evoWimm.append(evoData)
-            if len(evoWimm) <= 0:
-                otgwDebug("Evohome data, no zones")
-                otgwExit(33)
-            else:
-                otgwDebug("write Evohome data, zones: ", len(evoWimm))
-                with open(os.environ["EVOHOMEZ"], "w") as f:
-                    json.dump(evoWimm, f)
-                    f.close()
+
+        if len(evoWimm) <= 0:
+            otgwDebug("Evohome data, no zones")
+            otgwExit(33)
+        else:
+            otgwDebug("write Evohome data, zones: ", len(evoWimm))
+            with open(os.environ["EVOHOMEZ"], "w") as f:
+                json.dump(evoWimm, f)
+                f.close()
 
     otgwDebug("read Evohome data")
     with open(os.environ["EVOHOMEZ"], "r") as f:
@@ -157,20 +159,30 @@ def run_quickstart():
 #
 # 2. calculate central heating settings
 #
-    i = 0
+    i = 0 # zones request
+    y = 0 # zones over setpoint
     totalDiff = 0
     for evoZone in evoWimm:
         zoneDiff = evoZone['setpoint'] - evoZone['temp']
+        otgwDebug("evoData zone", evoZone['name'], "dif =", zoneDiff)
         if zoneDiff > 0:
             totalDiff = totalDiff + zoneDiff
             i = i + 1
+        if zoneDiff < 0:
+            y = y + 1
 
     # average heating demand
     otgwDebug("totallDiff =", totalDiff, ", i =", i)
     if i > 0:
+        # some zones request heat
         AVGDIF = totalDiff / i
     else:
-        AVGDIF = -1
+        if (y == 0):
+            # all zones at setpoint
+            AVGDIF = 0
+        else:
+            # all zones over setpoint
+            AVGDIF = -1
 
     # heating mode
     HM = int(otgwData['chmode']['value'])
@@ -191,11 +203,12 @@ def run_quickstart():
         otgwDebug("CS heating curve = ", CS)
 
         # see cv manual
-        pendelMax = 10
+        pendelMax = 15
 
         PT = float(otgwData['boilertemp']['value'])
         if CS > PT + pendelMax:
-            # gradual change
+            # gradual change at start
+            otgwDebug("pendelmax", pendelMax, "active")
             CS = PT + pendelMax
 
         CS = math.ceil(CS)
@@ -212,6 +225,7 @@ def run_quickstart():
 
         # 'buffer bottom' temperature
         SH = float(os.environ["BUFTEMP"])
+        #SH = float(otgwData['chwsetpoint']['value'])
 
         # reset override
         MM = '93'
@@ -226,7 +240,7 @@ def run_quickstart():
     otgwDebug("CS =", CS, "returntemp =", otgwData['returntemp']['value'],"SH =", SH)
 
     # Evohome demand                return hotter than setpoint
-    if (HM == 1) and ((AVGDIF > 0) or (float(otgwData['returntemp']['value']) > SH)):
+    if (HM == 1) and ((AVGDIF >= 0) or (float(otgwData['returntemp']['value']) > SH)):
         # wait until gateway mode
         while str(otgwCmd("PR", 'M')).find('M=M') > 0:
             otgwCmd("GW", '1')
@@ -271,7 +285,9 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, handler)
 
     # other kill signals
-    signal.signal(signal.SIGHUP, handler)
+    if (signal.SIGHUP):
+        # Linux only
+        signal.signal(signal.SIGHUP, handler)
     signal.signal(signal.SIGINT, handler)
 
     try:
@@ -287,6 +303,11 @@ if __name__ == "__main__":
 
     # redirect stderr
     sys.stderr = open(os.environ["OTGWLOG"], "at")
+
+    # Python search path
+    otgwDebug(sys.path)
+    #for module in sys.modules:
+    #    otgwDebug(sys.modules[module])
 
     try:
         run_quickstart()
