@@ -27,7 +27,8 @@ Python script which collects data about outside temperature and heating demand.
 The necessary setpoint ('CS') is calculated from a defined heating curve ("stooklijn").
 Accordingly the maximum setpoint ('SH') is calculated to limit central heating temperature.
 
-To override the thermostat the OTGW is run in gateway mode. When there's no heating demand (eg. at night) the control is transferred back to the thermostat, OTGW set to monitoring mode.
+To override the thermostat the OTGW is run in gateway mode. 
+When there's no heating demand (eg. at night) the control is transferred back to the thermostat, OTGW set to monitoring mode.
 
 ## otgwlog.py
 
@@ -37,7 +38,7 @@ It's Python 2 only. Unable to fix all Google cloud dependencies on 'Raspberry Pi
 
 Scheduled in cron to log data every two minutes:
 
-        */2 * * * * python2 <full path>/otgwlog.py
+        */2 * * * * timeout 1m nice -n 19 python2 <full path>/otgwlog.py
 
 ## .otsetcfg.txt
 
